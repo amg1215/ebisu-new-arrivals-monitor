@@ -1,0 +1,60 @@
+name: Ebisu new-arrivals monitor
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: ebisu-monitor
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      # state.json/monitor.log hold data scraped from a login-gated
+      # supplier account, so they are kept out of git entirely (see
+      # .gitignore) and persisted only in GitHub's private Actions cache,
+      # scoped to this repo.
+      - name: Restore previous state
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            state.json
+            monitor.log
+          key: ebisu-monitor-state-${{ github.run_id }}
+          restore-keys: |
+            ebisu-monitor-state-
+
+      - name: Run monitor
+        env:
+          SUPPLIER_EMAIL: ${{ secrets.SUPPLIER_EMAIL }}
+          SUPPLIER_PASSWORD: ${{ secrets.SUPPLIER_PASSWORD }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          ALERT_TO: ${{ secrets.ALERT_TO }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: python monitor.py
+
+      - name: Trim log
+        if: always()
+        run: |
+          [ -f monitor.log ] && tail -n 2000 monitor.log > monitor.log.tmp && mv monitor.log.tmp monitor.log || true
+
+      - name: Save state for next run
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            state.json
+            monitor.log
+          key: ebisu-monitor-state-${{ github.run_id }}
